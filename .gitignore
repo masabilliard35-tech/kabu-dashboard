@@ -1,0 +1,10 @@
+# 秘密情報（絶対に公開しない）
+.streamlit/secrets.toml
+.streamlit/credentials.toml
+
+# Python
+__pycache__/
+*.pyc
+
+# ログ
+*.log
