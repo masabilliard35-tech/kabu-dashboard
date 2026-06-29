@@ -223,6 +223,28 @@ def fetch_quotes(symbols: tuple) -> dict:
     return out
 
 
+@st.cache_data(ttl=900)
+def fetch_history_bulk(symbols: tuple, period: str = "1y") -> dict:
+    """複数銘柄の日足OHLCを一括取得（スクリーニング用）"""
+    data = yf.download(
+        list(symbols),
+        period=period,
+        interval="1d",
+        auto_adjust=True,
+        progress=False,
+        group_by="ticker",
+        threads=True,
+    )
+    out = {}
+    for s in symbols:
+        try:
+            d = data[s].dropna(how="all")
+            out[s] = d if not d.empty else None
+        except Exception:
+            out[s] = None
+    return out
+
+
 @st.cache_data(ttl=300)
 def fetch_stock(ticker: str, period: str, interval: str) -> pd.DataFrame:
     df = yf.download(
