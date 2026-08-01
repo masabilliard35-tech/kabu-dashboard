@@ -3,6 +3,7 @@ import datetime as dt
 import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
+import streamlit.components.v1 as components
 from plotly.subplots import make_subplots
 from streamlit_js_eval import streamlit_js_eval
 
@@ -27,6 +28,48 @@ st.set_page_config(
 
 UP = "#26a69a"
 DOWN = "#ef5350"
+
+CROSSHAIR_JS = """
+<script>
+(function(){
+  var gd=document.getElementById('gd');
+  if(!gd) return;
+  function fmtDate(v){var d=new Date(v);return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');}
+  function fmtNum(v){return Math.abs(v)>=100?Math.round(v).toLocaleString():(Math.round(v*100)/100).toString();}
+  function yAxes(fl){var a=[];Object.keys(fl).forEach(function(k){if(/^yaxis(\\d+)?$/.test(k)){a.push(fl[k]);}});return a;}
+  var ov=document.createElement('div');
+  ov.style.cssText='position:absolute;left:0;top:0;width:100%;height:100%;pointer-events:none;z-index:5;';
+  var vline=document.createElement('div');vline.style.cssText='position:absolute;border-left:1px dotted #aaa;display:none;';
+  var hline=document.createElement('div');hline.style.cssText='position:absolute;border-top:1px dotted #aaa;display:none;';
+  var dlab=document.createElement('div');dlab.style.cssText='position:absolute;background:#444;color:#fff;font:11px sans-serif;padding:1px 5px;border:1px solid #888;display:none;transform:translateX(-50%);white-space:nowrap;';
+  var plab=document.createElement('div');plab.style.cssText='position:absolute;background:#c0392b;color:#fff;font:11px sans-serif;padding:1px 5px;display:none;white-space:nowrap;';
+  ov.appendChild(vline);ov.appendChild(hline);ov.appendChild(dlab);ov.appendChild(plab);
+  gd.style.position='relative';gd.appendChild(ov);
+  function hide(){vline.style.display=hline.style.display=dlab.style.display=plab.style.display='none';}
+  gd.addEventListener('mousemove',function(e){
+    var fl=gd._fullLayout;if(!fl||!fl.xaxis){hide();return;}
+    var rect=gd.getBoundingClientRect();
+    var mx=e.clientX-rect.left,my=e.clientY-rect.top;
+    var xa=fl.xaxis,xl=xa._offset,xr=xa._offset+xa._length;
+    if(mx<xl||mx>xr){hide();return;}
+    var yas=yAxes(fl),top=1e9,bot=-1e9;
+    for(var i=0;i<yas.length;i++){top=Math.min(top,yas[i]._offset);bot=Math.max(bot,yas[i]._offset+yas[i]._length);}
+    if(my<top||my>bot){hide();return;}
+    vline.style.display='block';vline.style.left=mx+'px';vline.style.top=top+'px';vline.style.height=(bot-top)+'px';
+    dlab.style.display='block';dlab.style.left=mx+'px';dlab.style.top=(bot+3)+'px';dlab.textContent=fmtDate(xa.p2d(mx-xa._offset));
+    var cax=null;for(var j=0;j<yas.length;j++){if(my>=yas[j]._offset&&my<=yas[j]._offset+yas[j]._length){cax=yas[j];break;}}
+    if(cax){
+      hline.style.display='block';hline.style.left=xl+'px';hline.style.top=my+'px';hline.style.width=(xr-xl)+'px';
+      var yData=cax.p2d(my-cax._offset),right=cax.side==='right';
+      plab.style.display='block';plab.style.top=my+'px';plab.textContent=fmtNum(yData);
+      if(right){plab.style.left=(xr+1)+'px';plab.style.transform='translateY(-50%)';}
+      else{plab.style.left=(xl-1)+'px';plab.style.transform='translate(-100%,-50%)';}
+    }else{hline.style.display=plab.style.display='none';}
+  });
+  gd.addEventListener('mouseleave',hide);
+})();
+</script>
+"""
 
 st.markdown(
     """
@@ -151,9 +194,6 @@ with tab_dash:
         for k, v in {"sma_short": 25, "sma_long": 75,
                      "boll_period": 20, "macd_set": "12 / 26 / 9"}.items():
             st.session_state.setdefault(k, v)
-        st.session_state.setdefault(
-            "sig_sel", ["ゴールデン/デッドクロス", "MACDクロス"]
-        )
         sma_short = st.session_state.sma_short
         sma_long = st.session_state.sma_long
         boll_period = st.session_state.boll_period
@@ -164,16 +204,16 @@ with tab_dash:
 
         ticker = st.session_state.ticker
         name = SYM_TO_LABEL.get(ticker, ticker)
-        tn = st.columns([3.5, 1, 1.3])
+        tn = st.columns([3.5, 2.5])
         tn[0].markdown(
             f"#### {name}　<small>{ticker}</small>", unsafe_allow_html=True
         )
-        interval = tn[1].selectbox(
-            "足", ["1d", "1wk", "1mo"], index=0, label_visibility="collapsed",
+        tf = tn[1].radio(
+            "足", ["日足", "週足", "月足"], index=0, horizontal=True,
+            label_visibility="collapsed",
         )
-        period = tn[2].selectbox(
-            "表示期間", ["1mo", "3mo", "6mo", "1y", "2y", "5y", "max"], index=2,
-        )
+        interval, period = {"日足": ("1d", "1y"), "週足": ("1wk", "5y"),
+                            "月足": ("1mo", "max")}[tf]
 
         try:
             buffer = {"1mo": "1y", "3mo": "2y", "6mo": "3y", "1y": "5y",
@@ -232,8 +272,7 @@ with tab_dash:
                     go.Scatter(
                         x=df.index, y=close, mode="lines",
                         line=dict(width=0), opacity=0, showlegend=False,
-                        name="",
-                        hovertemplate="%{x|%Y-%m-%d}<br>%{y:,.2f}<extra></extra>",
+                        name="", hoverinfo="skip",
                     ),
                     row=1, col=1,
                 )
@@ -331,53 +370,6 @@ with tab_dash:
                 lo = float(base["Low"].min())
                 hi = float(base["High"].max())
 
-                # シグナル矢印
-                sig_groups = st.session_state.get("sig_sel", [])
-                if sig_groups:
-                    cols = [c for g in sig_groups for c in sg.GROUPS.get(g, [])]
-                    sdf = sg.compute(df, sma_short, sma_long, macd_fast,
-                                     macd_slow, macd_sig, boll_period)
-                    rng = (hi - lo) or hi or 1.0
-                    off = rng * 0.03
-                    bx, by, bt = [], [], []
-                    sx, sy, stt = [], [], []
-                    for c in cols:
-                        label, direction = sg.SIGNAL_META[c]
-                        hit = sdf.index[sdf[c].fillna(False)].intersection(base.index)
-                        for ts in hit:
-                            if direction == "buy":
-                                bx.append(ts)
-                                by.append(float(df.loc[ts, "Low"]) - off)
-                                bt.append(label)
-                            else:
-                                sx.append(ts)
-                                sy.append(float(df.loc[ts, "High"]) + off)
-                                stt.append(label)
-                    if bx:
-                        fig.add_trace(
-                            go.Scatter(
-                                x=bx, y=by, mode="markers", text=bt,
-                                marker=dict(symbol="triangle-up", size=11,
-                                            color=UP,
-                                            line=dict(width=0.5, color="white")),
-                                hovertemplate="%{text} 買い<extra></extra>",
-                                name="買い"),
-                            row=1, col=1,
-                        )
-                        lo = min(lo, min(by) - off)
-                    if sx:
-                        fig.add_trace(
-                            go.Scatter(
-                                x=sx, y=sy, mode="markers", text=stt,
-                                marker=dict(symbol="triangle-down", size=11,
-                                            color=DOWN,
-                                            line=dict(width=0.5, color="white")),
-                                hovertemplate="%{text} 売り<extra></extra>",
-                                name="売り"),
-                            row=1, col=1,
-                        )
-                        hi = max(hi, max(sy) + off)
-
                 pad = (hi - lo) * 0.05 or hi * 0.05
                 fig.update_yaxes(range=[lo - pad, hi + pad], side="right",
                                  row=1, col=1)
@@ -395,38 +387,34 @@ with tab_dash:
                 if interval == "1d" and not ticker.endswith("-USD"):
                     fig.update_xaxes(rangebreaks=[dict(bounds=["sat", "mon"])])
 
-                fig.update_xaxes(
-                    showspikes=True, spikemode="across", spikesnap="cursor",
-                    spikethickness=1, spikedash="dot", spikecolor="#999",
-                )
-                fig.update_yaxes(
-                    showspikes=True, spikethickness=1, spikedash="dot",
-                    spikecolor="#999",
-                )
                 fig.update_layout(
                     height=chart_h,
                     template="plotly_dark",
                     xaxis_rangeslider_visible=False,
-                    hovermode="x",
+                    hovermode="closest",
                     showlegend=False,
                     dragmode="pan",
-                    margin=dict(t=2, b=2, l=6, r=6),
+                    margin=dict(t=8, b=28, l=6, r=55),
                     bargap=0.05,
                 )
-                st.plotly_chart(fig, use_container_width=True,
-                                config={"scrollZoom": True, "displaylogo": False})
+                chtml = fig.to_html(
+                    include_plotlyjs="cdn", full_html=True, div_id="gd",
+                    config={"scrollZoom": True, "displaylogo": False,
+                            "responsive": True},
+                )
+                chtml = chtml.replace("</body>", CROSSHAIR_JS + "</body>")
+                components.html(chtml, height=chart_h + 20, scrolling=False)
         except Exception as e:
             st.error(f"取得エラー: {e}")
 
-        # 指標・シグナル設定（チャート直下・小型）
+        # 指標設定（チャート直下・小型）
         st.markdown("<div class='ind-set'>", unsafe_allow_html=True)
-        iset = st.columns([1, 1, 1, 1.6, 2.4])
+        iset = st.columns([1, 1, 1, 1.6])
         iset[0].number_input("SMA短", 5, 200, key="sma_short")
         iset[1].number_input("SMA長", 5, 400, key="sma_long")
         iset[2].number_input("BB期間", 5, 100, key="boll_period")
         iset[3].selectbox("MACD (短/長/信号)", ["12 / 26 / 9", "9 / 18 / 6"],
                           key="macd_set")
-        iset[4].multiselect("シグナル矢印", list(sg.GROUPS), key="sig_sel")
         st.markdown("</div>", unsafe_allow_html=True)
 
     # ---- 左: 経済指標 ----
